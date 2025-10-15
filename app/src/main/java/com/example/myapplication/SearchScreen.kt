@@ -31,9 +31,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-// Mapeia o nome da categoria para a imagem (já que não guardamos a imagem no banco)
 fun getImagemCategoria(nome: String): Int {
     return when {
         nome.equals("League of Legends", ignoreCase = true) -> R.drawable.lol
@@ -46,66 +47,71 @@ fun getImagemCategoria(nome: String): Int {
     }
 }
 
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TwitchSearchScreen(navController: NavController) {
     var searchText by remember { mutableStateOf("") }
     var isSearchBarFocused by remember { mutableStateOf(false) }
 
-    // --- Lógica do Banco de Dados ---
     val context = LocalContext.current
-    val db = remember { AppDatabase.getDatabase(context) }
-    val pesquisaRecenteDAO = remember { db.pesquisaRecenteDAO() }
-    val categoriaDAO = remember { db.categoriaDAO() }
+    val coroutineScope = rememberCoroutineScope()
+
+    // --- Lógica do Banco de Dados (Corrigida) ---
+    var pesquisaRecenteDAO by remember { mutableStateOf<PesquisaRecenteDAO?>(null) }
+    var categoriaDAO by remember { mutableStateOf<CategoriaDAO?>(null) }
 
     var listaPesquisas by remember { mutableStateOf<List<PesquisaRecente>>(emptyList()) }
     var listaCategorias by remember { mutableStateOf<List<CategoriaDb>>(emptyList()) }
 
-    val coroutineScope = rememberCoroutineScope()
-
-    // --- CRUD CATEGORIAS: Estados para controlar o Dialog ---
     var showDialog by remember { mutableStateOf(false) }
     var categoriaParaEditar by remember { mutableStateOf<CategoriaDb?>(null) }
 
-
-    // Função para recarregar as categorias do banco
-    fun recarregarCategorias() {
-        coroutineScope.launch {
-            listaCategorias = categoriaDAO.buscarTodas()
+    // Carrega o banco e os DAOs em segundo plano para não travar a UI
+    LaunchedEffect(context) {
+        withContext(Dispatchers.IO) {
+            val db = AppDatabase.getDatabase(context)
+            pesquisaRecenteDAO = db.pesquisaRecenteDAO()
+            categoriaDAO = db.categoriaDAO()
         }
     }
 
-    // Carrega os dados do banco quando a tela é iniciada
-    LaunchedEffect(Unit) {
-        listaPesquisas = pesquisaRecenteDAO.buscarTodas()
-        // Bônus: Adiciona as categorias iniciais no banco se ele estiver vazio
-        if (categoriaDAO.buscarTodas().isEmpty()) {
-            coroutineScope.launch {
-                categoriaDAO.inserir(CategoriaDb(nome = "League of Legends", tipo = "MOBA", espectadores = "123k"))
-                categoriaDAO.inserir(CategoriaDb(nome = "CS2", tipo = "FPS", espectadores = "98k"))
-                recarregarCategorias()
+    // Carrega os dados do banco de forma segura depois que os DAOs estiverem prontos
+    LaunchedEffect(pesquisaRecenteDAO, categoriaDAO) {
+        pesquisaRecenteDAO?.let { dao ->
+            listaPesquisas = dao.buscarTodas()
+        }
+        categoriaDAO?.let { dao ->
+            if (dao.buscarTodas().isEmpty()) {
+                dao.inserir(CategoriaDb(nome = "League of Legends", tipo = "MOBA", espectadores = "123k"))
+                dao.inserir(CategoriaDb(nome = "CS2", tipo = "FPS", espectadores = "98k"))
             }
-        } else {
-            recarregarCategorias()
+            listaCategorias = dao.buscarTodas()
         }
     }
 
-    // --- CRUD CATEGORIAS: O Dialog para Adicionar/Editar/Deletar ---
+    fun recarregarCategorias() {
+        categoriaDAO?.let { dao ->
+            coroutineScope.launch {
+                listaCategorias = dao.buscarTodas()
+            }
+        }
+    }
+    
+    fun recarregarPesquisas() {
+        pesquisaRecenteDAO?.let { dao ->
+            coroutineScope.launch {
+                listaPesquisas = dao.buscarTodas()
+            }
+        }
+    }
+
     if (showDialog) {
         CategoriaDialog(
             categoria = categoriaParaEditar,
-            onDismiss = {
-                showDialog = false
-                categoriaParaEditar = null
-            },
+            onDismiss = { showDialog = false; categoriaParaEditar = null },
             onConfirm = { categoria ->
                 coroutineScope.launch {
-                    if (categoria.id == 0) {
-                        categoriaDAO.inserir(categoria)
-                    } else {
-                        categoriaDAO.atualizar(categoria)
-                    }
+                    if (categoria.id == 0) categoriaDAO?.inserir(categoria) else categoriaDAO?.atualizar(categoria)
                     recarregarCategorias()
                     showDialog = false
                     categoriaParaEditar = null
@@ -113,7 +119,7 @@ fun TwitchSearchScreen(navController: NavController) {
             },
             onDelete = { categoria ->
                 coroutineScope.launch {
-                    categoriaDAO.deletar(categoria)
+                    categoriaDAO?.deletar(categoria)
                     recarregarCategorias()
                     showDialog = false
                     categoriaParaEditar = null
@@ -122,15 +128,10 @@ fun TwitchSearchScreen(navController: NavController) {
         )
     }
 
-
     Scaffold(
         floatingActionButton = {
-            // --- CRUD CATEGORIAS: Botão para CRIAR ---
             FloatingActionButton(
-                onClick = {
-                    categoriaParaEditar = null // Garante que é para criar uma nova
-                    showDialog = true
-                },
+                onClick = { categoriaParaEditar = null; showDialog = true },
                 containerColor = Color(0xFF9147FF)
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Adicionar Categoria", tint = Color.White)
@@ -140,16 +141,11 @@ fun TwitchSearchScreen(navController: NavController) {
         Column(modifier = Modifier.padding(paddingValues)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .weight(1f)
-                        .background(Color.DarkGray, shape = CircleShape)
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                    modifier = Modifier.weight(1f).background(Color.DarkGray, shape = CircleShape).padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Icon(painter = painterResource(id = android.R.drawable.ic_menu_search), contentDescription = "Search Icon", tint = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
@@ -160,9 +156,7 @@ fun TwitchSearchScreen(navController: NavController) {
                             textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
                             cursorBrush = SolidColor(Color.White),
                             singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .onFocusChanged { focusState -> isSearchBarFocused = focusState.isFocused }
+                            modifier = Modifier.fillMaxWidth().onFocusChanged { focusState -> isSearchBarFocused = focusState.isFocused }
                         )
                         if (searchText.isEmpty()) {
                             Text("Procurar", color = Color.Gray, fontSize = 16.sp)
@@ -181,8 +175,8 @@ fun TwitchSearchScreen(navController: NavController) {
                     TextButton(onClick = {
                         if (searchText.isNotBlank()) {
                             coroutineScope.launch {
-                                pesquisaRecenteDAO.inserir(PesquisaRecente(termo = searchText))
-                                listaPesquisas = pesquisaRecenteDAO.buscarTodas()
+                                pesquisaRecenteDAO?.inserir(PesquisaRecente(termo = searchText))
+                                recarregarPesquisas()
                                 searchText = ""
                                 isSearchBarFocused = false
                             }
@@ -207,8 +201,8 @@ fun TwitchSearchScreen(navController: NavController) {
                             Text(pesquisa.termo, color = Color.White, modifier = Modifier.padding(vertical = 8.dp))
                             IconButton(onClick = {
                                 coroutineScope.launch {
-                                    pesquisaRecenteDAO.deletar(pesquisa)
-                                    listaPesquisas = pesquisaRecenteDAO.buscarTodas()
+                                    pesquisaRecenteDAO?.deletar(pesquisa)
+                                    recarregarPesquisas()
                                 }
                             }) {
                                 Icon(Icons.Default.Clear, contentDescription = "Remover pesquisa", tint = Color.Gray)
@@ -226,14 +220,8 @@ fun TwitchSearchScreen(navController: NavController) {
                     val filteredList = listaCategorias.filter { it.nome.contains(searchText, ignoreCase = true) }
                     items(filteredList) { categoria ->
                         Card(
-                            // --- CRUD CATEGORIAS: Gesto de clique longo para EDITAR/DELETAR ---
                             modifier = Modifier.pointerInput(Unit) {
-                                detectTapGestures(
-                                    onLongPress = {
-                                        categoriaParaEditar = categoria
-                                        showDialog = true
-                                    }
-                                )
+                                detectTapGestures(onLongPress = { categoriaParaEditar = categoria; showDialog = true })
                             },
                             colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                         ) {
@@ -273,36 +261,16 @@ fun CategoriaDialog(
         title = { Text(text = if (categoria == null) "Adicionar Categoria" else "Editar Categoria") },
         text = {
             Column {
-                TextField(
-                    value = nome,
-                    onValueChange = { nome = it },
-                    label = { Text("Nome da Categoria") }
-                )
+                TextField(value = nome, onValueChange = { nome = it }, label = { Text("Nome da Categoria") })
                 Spacer(modifier = Modifier.height(8.dp))
-                TextField(
-                    value = tipo,
-                    onValueChange = { tipo = it },
-                    label = { Text("Tipo (Ex: FPS, MOBA)") }
-                )
+                TextField(value = tipo, onValueChange = { tipo = it }, label = { Text("Tipo (Ex: FPS, MOBA)") })
                 Spacer(modifier = Modifier.height(8.dp))
-                TextField(
-                    value = espectadores,
-                    onValueChange = { espectadores = it },
-                    label = { Text("Espectadores (Ex: 98k)") }
-                )
+                TextField(value = espectadores, onValueChange = { espectadores = it }, label = { Text("Espectadores (Ex: 98k)") })
             }
         },
         confirmButton = {
             Button(onClick = {
-                val novaOuEditadaCategoria = categoria?.copy(
-                    nome = nome,
-                    tipo = tipo,
-                    espectadores = espectadores
-                ) ?: CategoriaDb(
-                    nome = nome,
-                    tipo = tipo,
-                    espectadores = espectadores
-                )
+                val novaOuEditadaCategoria = categoria?.copy(nome = nome, tipo = tipo, espectadores = espectadores) ?: CategoriaDb(nome = nome, tipo = tipo, espectadores = espectadores)
                 onConfirm(novaOuEditadaCategoria)
             }) {
                 Text("Salvar")
@@ -311,10 +279,7 @@ fun CategoriaDialog(
         dismissButton = {
             Row {
                 if (categoria != null) {
-                    Button(
-                        onClick = { onDelete(categoria) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
-                    ) {
+                    Button(onClick = { onDelete(categoria) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) {
                         Text("Deletar")
                     }
                     Spacer(modifier = Modifier.width(8.dp))

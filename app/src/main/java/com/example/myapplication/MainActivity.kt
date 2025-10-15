@@ -37,11 +37,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.example.myapplication.screens.TwitchProfileScreen
+
 import com.example.myapplication.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -117,7 +118,7 @@ fun TwitchApp() {
                     TwitchActivitiesScreen(navController = navController)
                 }
                 composable(Screen.Profile.route) {
-                    TwitchProfileScreen(navController = navController)
+                    ProfileScreen(navController = navController)
                 }
             }
         }
@@ -357,8 +358,6 @@ fun ClipPreviewItem(clip: TwitchClip) {
 }
 
 
-
-
 @Preview(showBackground = true)
 @Composable
 fun DefaultPreview() {
@@ -366,4 +365,3 @@ fun DefaultPreview() {
         TwitchApp()
     }
 }
-
